@@ -20,27 +20,28 @@ class CollisionAvoidance:
         self.collision_detected = False
         self.last_direction = 0 # 1 для прямого; -1 для обратного; 0 для исходного состояния
 
+        # Добавлен атрибут для хранения направления препятствия
+        self.obstacle_direction = 0
+
     def scan_callback(self, data):
+        # Берем 10 ближайших точек лидара
+        closest_points = sorted(data.ranges)[:10]
+        
+        # Находим направление препятствия
+        min_index = data.ranges.index(min(closest_points))
+        angle = data.angle_min + min_index * data.angle_increment
+        self.obstacle_direction = math.degrees(angle)
+
         # Проверяем, нет ли препятствий на безопасном расстоянии
-        if min(data.ranges) < self.safe_distance and not self.collision_detected:
+        if min(closest_points) < self.safe_distance and not self.collision_detected:
             # Немедленно останавливаем робота
             self.twist.linear.x = 0
             self.cmd_vel_pub.publish(self.twist)
-            rospy.sleep(0.1)  # Даем роботу время, чтобы остановиться
-
-            # Определяем направление движения назад
-            if self.last_direction == 1:  # Движение вперед
-                self.twist.linear.x = -self.max_linear_speed
-            else:  # Двигаемся назад или стоим неподвижно
-                self.twist.linear.x = self.max_linear_speed
-
-            self.twist.angular.z = 0
-            self.cmd_vel_pub.publish(self.twist)
-            rospy.logwarn("Обнаружено препятствие! Отхожу на безопасное расстояние.")
+            rospy.logwarn("Обнаружено препятствие! Остановка.")
 
             self.collision_detected = True
 
-        elif min(data.ranges) >= self.safe_distance and self.collision_detected:
+        elif min(closest_points) >= self.safe_distance and self.collision_detected:
             # Останавливаем робота и сообщаем о нахождении в безопасной зоне
             self.twist.linear.x = 0
             self.twist.angular.z = 0
@@ -53,14 +54,20 @@ class CollisionAvoidance:
         while not rospy.is_shutdown():
             key = input("Введите команду (w: вперед, s: назад, a: влево, d: вправо, q: выход/остановка ноды): ")
 
-            if key == 'w':
+            if key == 'w' and self.collision_detected:
+                rospy.logwarn("Невозможно двигаться вперед, так как обнаружено препятствие.")
+            elif key == 'w':
                 self.twist.linear.x = self.max_linear_speed
                 self.twist.angular.z = 0
                 self.last_direction = 1  # Двигаемся вперед
             elif key == 's':
-                self.twist.linear.x = -self.max_linear_speed
-                self.twist.angular.z = 0
-                self.last_direction = -1  # Двигаемся назад
+                # Добавлена проверка на направление препятствия при движении назад
+                if abs(self.obstacle_direction) < 45 or abs(self.obstacle_direction - 180) < 45:
+                    rospy.logwarn("Невозможно двигаться назад, так как обнаружено препятствие.")
+                else:
+                    self.twist.linear.x = -self.max_linear_speed
+                    self.twist.angular.z = 0
+                    self.last_direction = -1  # Двигаемся назад
             elif key == 'a':
                 self.twist.linear.x = 0
                 self.twist.angular.z = self.max_angular_speed
